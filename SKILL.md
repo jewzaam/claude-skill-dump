@@ -1,5 +1,6 @@
 ---
 name: dump
+model: sonnet
 description: Persist session knowledge (conventions, gotchas, decisions, learnings) into durable documentation: the project's authoritative agent file (CLAUDE.md or AGENTS.md — whichever the project uses, never both), README.md, docs/standards/, ~/source/standards/, and other docs/ as needed. **Trigger only on the explicit `/dump` slash command.** Do not trigger on natural-language phrases — the user wants deterministic invocation, never inferred intent. Dispatches parallel subagents per documentation target, writes directly, reports the list of changed paths after.
 allowed-tools: Bash(ls:*), Bash(${CLAUDE_SKILL_DIR}/scripts/check-user-owned.sh), Bash(${CLAUDE_SKILL_DIR}/scripts/get-remotes.sh)
 ---
@@ -142,7 +143,7 @@ This gives the operator a sanity-check moment. The dispatch proceeds immediately
 
 ### Step 3: Dispatch parallel subagents
 
-Spawn one subagent per documentation target that has content to write. Send all in a single message for parallelism. Use the `general-purpose` agent type unless a more specific one fits.
+Spawn one subagent per documentation target that has content to write. Send all in a single message for parallelism. Use the `general-purpose` agent type unless a more specific one fits. Set `model: "sonnet"` on each Agent call.
 
 Targets and their subagent scopes:
 
