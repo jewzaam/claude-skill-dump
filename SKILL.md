@@ -1,7 +1,7 @@
 ---
 name: dump
 model: sonnet
-description: Persist session knowledge (conventions, gotchas, decisions, learnings) into durable documentation: the project's authoritative agent file (CLAUDE.md or AGENTS.md — whichever the project uses, never both), README.md, docs/standards/, ~/source/standards/, and other docs/ as needed. **Trigger only on the explicit `/dump` slash command.** Do not trigger on natural-language phrases — the user wants deterministic invocation, never inferred intent. Dispatches parallel subagents per documentation target, writes directly, reports the list of changed paths after.
+description: Persist session knowledge (conventions, gotchas, decisions, learnings) into durable documentation: the project's authoritative agent file (CLAUDE.md or AGENTS.md — whichever the project uses, never both), README.md, docs/standards/, ~/source/standards/ (prescriptive cross-project rules), ~/source/knowledgebase/ (descriptive cross-project facts), and other docs/ as needed. **Trigger only on the explicit `/dump` slash command.** Do not trigger on natural-language phrases — the user wants deterministic invocation, never inferred intent. Dispatches parallel subagents per documentation target, writes directly, reports the list of changed paths after.
 allowed-tools: Bash(ls:*), Bash(${CLAUDE_SKILL_DIR}/scripts/check-user-owned.sh), Bash(${CLAUDE_SKILL_DIR}/scripts/get-remotes.sh)
 ---
 
@@ -41,6 +41,18 @@ This listing is **shallow** — top level only. For file-level routing of a nugg
 
 Referenced by: Step 1 environment detect (confirms `~/source/standards/` exists before considering it as a target), Step 3 dispatch (subagent must read `~/source/standards/CLAUDE.md` for file-level routing), routing heuristics (where cross-repo patterns live).
 
+### Cross-project knowledgebase  (auto-injected)
+
+ls -la ~/source/knowledgebase/:
+
+!`ls -la ~/source/knowledgebase/ 2>&1 || true`
+
+This listing is **shallow** — top level only. For file-level routing of a nugget, read `~/source/knowledgebase/CLAUDE.md`; it is the index mapping topics (claude-code, kubernetes, build, observability, etc.) to their files.
+
+`~/source/knowledgebase/` is the **descriptive** sibling of `~/source/standards/`: vendor quirks, tool internals, API taxonomies, discovered failure modes — "this is how X works", not "do it this way". A nugget routes here when it is a fact about how an outside vendor/tool/API behaves; it routes to standards when it is a rule for how to write code. Hybrid topics live in both, cross-linked.
+
+Referenced by: Step 1 environment detect (confirms `~/source/knowledgebase/` exists before considering it as a target), Step 2 routing (descriptive vs prescriptive split), Step 3 dispatch (subagent must read `~/source/knowledgebase/CLAUDE.md` for file-level routing), routing heuristics.
+
 ### Local repo ownership (auto-injected)
 
 ${CLAUDE_SKILL_DIR}/scripts/check-user-owned.sh:
@@ -63,6 +75,8 @@ Output: four lines. Both the raw form (whatever `git remote get-url origin` retu
 - `LOCAL_REMOTE_HTTPS: <url|none>` — same, converted to `https://` browser form.
 - `STANDARDS_REMOTE_RAW: <url|none>` — origin of `~/source/standards/`.
 - `STANDARDS_REMOTE_HTTPS: <url|none>` — same, converted to `https://` browser form.
+- `KNOWLEDGEBASE_REMOTE_RAW: <url|none>` — origin of `~/source/knowledgebase/`.
+- `KNOWLEDGEBASE_REMOTE_HTTPS: <url|none>` — same, converted to `https://` browser form.
 
 The model must use these injected values directly, **never reconstruct them from filesystem paths, do its own SSH→HTTPS conversion, or guess from context**. Anti-pattern reminder: cross-repo references in any written doc must use the `_HTTPS` value verbatim.
 
@@ -90,7 +104,7 @@ Everything is already injected at the top of this skill under **Pre-flight inven
 
 Two gates to read from the injections:
 
-1. **Local repo ownership** — if `NOT_APPLICABLE`, skip the `~/source/standards/` subagent entirely and carry the reason into the final report's `Skipped` section. The check operates on the **local repo (cwd)** — *not* `~/source/standards/`.
+1. **Local repo ownership** — if `NOT_APPLICABLE`, skip the `~/source/standards/` **and** `~/source/knowledgebase/` subagents entirely and carry the reason into the final report's `Skipped` section. The check operates on the **local repo (cwd)** — *not* on the standards or knowledgebase repos.
 2. **Agent-file authority** — determine which of `CLAUDE.md` or `AGENTS.md` is the authoritative one for this repo. Never both. Rules, in order:
    - If only one of the two files exists in the root listing, that file is authoritative.
    - If both exist, read each one's opening (first ~50 lines). If one explicitly references the other as the source of truth (e.g., `AGENTS.md` says "see CLAUDE.md" or vice versa), the *referenced* file is authoritative.
@@ -109,6 +123,7 @@ Before dispatching subagents, the main thread must inventory what the session co
 - **User-facing features added or changed** (→ README.md)
 - **Install, setup, or usage changes** (→ README.md)
 - **Coding standards** that emerged or were enforced (→ `docs/standards/` if project-local, `~/source/standards/` if cross-project and local repo is user-owned)
+- **Vendor quirks, tool internals, API behaviors, discovered failure modes** — descriptive facts about how an outside thing works (→ `~/source/knowledgebase/` if cross-project and local repo is user-owned; else the authoritative agent file). This is the descriptive counterpart to standards: route here when the nugget is "X behaves this way", not "write code this way".
 - **Bugs, fixes, error/cause pairs** worth recording (→ `docs/<topic>.md` if recurrence-prone, e.g., `docs/troubleshooting.md`)
 - **Open questions, deferred work, known issues** (→ `docs/<topic>.md` or README.md)
 
@@ -152,14 +167,15 @@ Targets and their subagent scopes:
 | Authoritative agent file (`CLAUDE.md` **or** `AGENTS.md`, never both) | Agent-facing conventions, gotchas, workflows, commands. Step 1 already selected which of the two is authoritative — write only to that one. |
 | `README.md` | Human-facing: what the project does, install, usage, examples, recent user-visible changes. |
 | `docs/standards/` | Project-local coding standards that emerged. Topic-scoped filenames only. |
-| `~/source/standards/` | Cross-project patterns. **Only if local repo is user-owned** (per `${CLAUDE_SKILL_DIR}/scripts/check-user-owned.sh`). The subagent must read `~/source/standards/CLAUDE.md` first — that file is the index of which topic lives in which file. Route each nugget to the correct existing file rather than guessing from the shallow pre-flight listing. Report change with TL;DR per user's global rules. **Do not run any quality checks** in `~/source/standards/` — see the out-of-repo rule below. |
+| `~/source/standards/` | Cross-project **prescriptive** patterns ("do it this way"). **Only if local repo is user-owned** (per `${CLAUDE_SKILL_DIR}/scripts/check-user-owned.sh`). The subagent must read `~/source/standards/CLAUDE.md` first — that file is the index of which topic lives in which file. Route each nugget to the correct existing file rather than guessing from the shallow pre-flight listing. Report change with TL;DR per user's global rules. **Do not run any quality checks** in `~/source/standards/` — see the out-of-repo rule below. |
+| `~/source/knowledgebase/` | Cross-project **descriptive** facts ("this is how X works") — vendor quirks, tool internals, API taxonomies, discovered failure modes. **Only if local repo is user-owned** (same gate as standards). The subagent must read `~/source/knowledgebase/CLAUDE.md` first — it is the topic→file index. Route each nugget to the correct existing file rather than guessing from the shallow listing. If the nugget is hybrid (has both a rule and the mechanics behind it), the prescriptive half goes to standards and the descriptive half here, each cross-linking the other via the provided HTTPS URLs. Report change with TL;DR per user's global rules. **Do not run any quality checks** in `~/source/knowledgebase/` — see the out-of-repo rule below. |
 | `docs/<topic>.md` | Troubleshooting, runbooks, design notes. Topic-scoped filenames only — never `LEARNINGS.md`, `NOTES.md`, or other catch-alls. Do not auto-create a decisions log; see routing heuristics. |
 
 Each subagent prompt must include:
 
 1. **Goal**: which file to update or create, and the durable purpose of that file
 2. **Knowledge bundle**: the relevant nuggets from the session inventory, verbatim where possible
-3. **Provenance**: paste the `LOCAL_REMOTE` URL from the **Remote URLs** pre-flight injection so the subagent can cite the source repo via its public `https://` form when the doc requires it (e.g., standards entries). For the `~/source/standards/` subagent, paste both `LOCAL_REMOTE` and `STANDARDS_REMOTE`. The subagent must never derive these URLs itself — use the injected values verbatim.
+3. **Provenance**: paste the `LOCAL_REMOTE` URL from the **Remote URLs** pre-flight injection so the subagent can cite the source repo via its public `https://` form when the doc requires it (e.g., standards entries). For the `~/source/standards/` subagent, paste `LOCAL_REMOTE` and `STANDARDS_REMOTE`. For the `~/source/knowledgebase/` subagent, paste `LOCAL_REMOTE`, `KNOWLEDGEBASE_REMOTE`, and `STANDARDS_REMOTE` (the last so it can cross-link a hybrid nugget's prescriptive half). The subagent must never derive these URLs itself — use the injected values verbatim.
 4. **Style rules**:
    - Preserve existing structure and heading conventions in the file
    - Insert new content under the right section; do not reorder unrelated content
@@ -170,7 +186,7 @@ Each subagent prompt must include:
    - For standards: cite rationale; pattern → why → when to apply
 5. **Constraint**: write the file directly, do not stage to scratch. Return the path written **plus a 2–5 bullet summary of the content inserted** — one bullet per concept added, enough detail that the main thread can spot a misroute or a poorly-worded insertion without re-reading the file. Bullets describe what was added, not what the file is. No diff, no full quotes.
 6. **Out-of-scope**: do not touch other docs; do not run commits; do not run formatters or linters unrelated to the doc itself.
-7. **Out-of-repo no-checks rule**: when the target file is outside the local repo (cwd) — most notably anything under `~/source/standards/` — the subagent must **not** run any quality checks against the target repo. That means no `make check`, no `make lint`, no `make test`, no reachability scripts, no formatters, no link checkers, no pre-commit hooks. These commands prompt the user and break the dump's "write directly, report after" contract. The user reviews and runs checks on the standards repo in a separate session.
+7. **Out-of-repo no-checks rule**: when the target file is outside the local repo (cwd) — most notably anything under `~/source/standards/` or `~/source/knowledgebase/` — the subagent must **not** run any quality checks against the target repo. That means no `make check`, no `make lint`, no `make test`, no reachability scripts, no formatters, no link checkers, no pre-commit hooks. These commands prompt the user and break the dump's "write directly, report after" contract. The user reviews and runs checks on the standards repo in a separate session.
 
 Sample subagent prompt skeleton:
 
@@ -197,7 +213,7 @@ Rules:
 - Cross-repo references must use the provided HTTPS URL verbatim — never local filesystem paths and never convert from SSH yourself.
 - Do not modify content unrelated to these nuggets.
 - Write the file directly.
-- If the target file is outside the local repo (e.g. anywhere under `~/source/standards/`), do NOT run quality checks of any kind: no `make check`, no lint, no tests, no reachability scripts, no formatters. The user reviews and runs those in a separate session.
+- If the target file is outside the local repo (e.g. anywhere under `~/source/standards/` or `~/source/knowledgebase/`), do NOT run quality checks of any kind: no `make check`, no lint, no tests, no reachability scripts, no formatters. The user reviews and runs those in a separate session.
 
 Return format (no diff, no full quotes):
 
@@ -228,10 +244,11 @@ The report itself is one thing: **what changed where**. Paths only. The user rea
 
 ## Skipped
 - ~/source/standards/: <reason>
+- ~/source/knowledgebase/: <reason>
 - <other>: <reason>
 
-## Standards TL;DR (~/source/standards/ only)
-- <file>: <one-line what and why>
+## Standards / Knowledgebase TL;DR (cross-project repos only)
+- <repo>/<file>: <one-line what and why>
 
 ## Verify (subagent bullets that look off — re-read these)
 - <path>: <which bullet, what looks wrong>
@@ -241,7 +258,7 @@ The report itself is one thing: **what changed where**. Paths only. The user rea
 - <nugget that didn't fit anywhere>
 - <duplicate-agent-file collapse flagged in Step 1, if applicable>
 
-Next step: run `/commit` to capture these changes before the context resets. Standards changes in ~/source/standards/ commit separately (different repo).
+Next step: run `/commit` to capture these changes before the context resets. Changes in ~/source/standards/ and ~/source/knowledgebase/ commit separately (different repos, one commit each).
 ```
 
 No commentary on significance, no per-file section breakdown, no diff content. If a target had no changes, omit it.
@@ -253,14 +270,15 @@ When a nugget plausibly belongs to multiple targets, use these rules. Wherever t
 - **Convention enforced by code review or linter** → `docs/standards/` (project) or `~/source/standards/` (cross-project, local repo user-owned only). Mention in the agent file only if agents need a reminder.
 - **Workflow command discovered** → agent file (so agents reuse), and README.md (if humans also run it).
 - **Gotcha specific to this repo's environment** → agent file only.
-- **Gotcha that recurs across user's repos** → somewhere under `~/source/standards/` if local repo (cwd) is user-owned, else agent file. The whole `~/source/standards/` tree is the cross-repo target. To find the right file, **read `~/source/standards/CLAUDE.md`** — it is the index that maps topics to files. Do not guess from the shallow root listing alone.
+- **Gotcha that recurs across user's repos** → if local repo (cwd) is user-owned, route by shape: a *rule* ("always do X") goes under `~/source/standards/`; a *behavior fact* ("vendor/tool Y does Z") goes under `~/source/knowledgebase/`. Else agent file. To find the right file, **read the target repo's `CLAUDE.md`** — each is the index that maps topics to files. Do not guess from the shallow root listing alone.
+- **Vendor quirk / tool internal / API behavior** (descriptive, recurs across repos) → `~/source/knowledgebase/` if local repo is user-owned, else agent file. Never standards — standards is prescriptive only.
 - **User preference** (e.g., "always use X over Y") → agent file if repo-specific. `~/.claude/CLAUDE.md` is **out of scope** for this skill (user manages globally).
 - **Architectural decision** → agent file under a "Design notes" section, **only if the user explicitly asks during the dump**. Do not auto-create a decisions log directory or scaffold. Decisions documents go stale fast and the user does not maintain them.
 
 ## Guardrails
 
 - **Do not write to `~/.claude/`** — that is global user config, managed elsewhere.
-- **Do not modify `~/source/standards/` when the local repo (cwd) is not user-owned.** Standards capture patterns from the user's own work; updates from external repos would mix in unvetted material.
+- **Do not modify `~/source/standards/` or `~/source/knowledgebase/` when the local repo (cwd) is not user-owned.** Both capture material from the user's own work; updates from external repos would mix in unvetted content.
 - **Do not commit.** This skill only writes files; commits are a separate, deliberate action by the user.
 - **Do not run quality checks against out-of-repo targets.** For any file outside the local repo (cwd) — `~/source/standards/` in particular — no `make check`, lint, tests, reachability scripts, formatters, or pre-commit hooks. These prompt the user and derail the dump's batch behavior. The user runs those checks in a separate session when they review the standards changes.
 - **Do not fabricate rationale.** If a nugget's "why" is unclear from the session, omit the rationale or list the gap under `Suggested follow-ups` — invented reasons rot the doc.
@@ -275,6 +293,7 @@ When a nugget plausibly belongs to multiple targets, use these rules. Wherever t
 - **No README.md exists**: create one only if there is user-facing content worth persisting. Skip creation for purely internal nuggets.
 - **No `docs/` directory**: create it only if a nugget genuinely belongs in a new topic-scoped doc. Do not scaffold an empty `docs/`.
 - **No `~/source/standards/CLAUDE.md`** (the standards index): the `~/source/standards/` subagent has no map to route by — skip the standards subagent and add a follow-up entry to the report flagging that the index is missing.
+- **No `~/source/knowledgebase/CLAUDE.md`** (the knowledgebase index): same handling — skip the knowledgebase subagent and add a follow-up entry flagging the missing index.
 - **Empty session inventory**: report "no durable knowledge identified" and exit. Do not write empty updates.
 - **Conflicting nuggets** (e.g., two corrections that contradict): surface to the user via `AskUserQuestion`. Batch all conflicts into a single `AskUserQuestion` call with one question per conflict (up to the tool's max of 4 questions) — never ask one at a time. If more than 4 conflicts exist, batch the first 4 and queue the rest for a follow-up `AskUserQuestion` only if the first batch's answers don't resolve them transitively.
 
