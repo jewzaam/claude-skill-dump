@@ -2,7 +2,7 @@
 name: dump
 model: sonnet
 description: Persist session knowledge (conventions, gotchas, decisions, learnings) into durable documentation: the project's authoritative agent file (CLAUDE.md or AGENTS.md — whichever the project uses, never both), README.md, docs/standards/, ~/source/standards/ (prescriptive cross-project rules), ~/source/knowledgebase/ (descriptive cross-project facts), and other docs/ as needed. **Trigger only on the explicit `/dump` slash command.** Do not trigger on natural-language phrases — the user wants deterministic invocation, never inferred intent. Dispatches parallel subagents per documentation target, writes directly, reports the list of changed paths after.
-allowed-tools: Bash(ls:*), Bash(${CLAUDE_SKILL_DIR}/scripts/check-user-owned.sh), Bash(${CLAUDE_SKILL_DIR}/scripts/get-remotes.sh)
+allowed-tools: Bash(ls:*), Bash(${CLAUDE_SKILL_DIR}/scripts/check-user-owned.sh), Bash(${CLAUDE_SKILL_DIR}/scripts/get-remotes.sh), Bash(${CLAUDE_SKILL_DIR}/scripts/get-remotes.sh:*)
 ---
 
 # dump
@@ -33,35 +33,42 @@ Referenced by: Step 2 routing (existing `docs/` structure determines whether a n
 
 ### Cross-project standards  (auto-injected)
 
-ls -la ~/source/standards/:
+!`(for d in "$HOME/source/standards" "$HOME/standards" "./standards"; do git -C "$d" rev-parse --git-dir &>/dev/null && echo "standards path: $(cd "$d" && pwd)" && ls -la "$d/" && exit 0; done; echo "standards: NOT_FOUND") 2>&1`
 
-!`ls -la ~/source/standards/ 2>&1 || true`
+**Shallow** listing — top level only. For file-level routing of a nugget, read `CLAUDE.md` in the listed path; it is the index mapping topics to files.
 
-This listing is **shallow** — top level only. For file-level routing of a nugget, read `~/source/standards/CLAUDE.md`; it is the index mapping topics (CLI, Python, naming, versioning, build, etc.) to their files.
-
-Referenced by: Step 1 environment detect (confirms `~/source/standards/` exists before considering it as a target), Step 3 dispatch (subagent must read `~/source/standards/CLAUDE.md` for file-level routing), routing heuristics (where cross-repo patterns live).
+Referenced by: Step 3 dispatch (subagent must read the standards repo's `CLAUDE.md` for file-level routing), routing heuristics (where cross-repo patterns live).
 
 ### Cross-project knowledgebase  (auto-injected)
 
-ls -la ~/source/knowledgebase/:
+!`(for d in "$HOME/source/knowledgebase" "$HOME/knowledgebase" "./knowledgebase"; do git -C "$d" rev-parse --git-dir &>/dev/null && echo "knowledgebase path: $(cd "$d" && pwd)" && ls -la "$d/" && exit 0; done; echo "knowledgebase: NOT_FOUND") 2>&1`
 
-!`ls -la ~/source/knowledgebase/ 2>&1 || true`
+**Shallow** listing — top level only. For file-level routing of a nugget, read `CLAUDE.md` in the listed path; it is the index mapping topics to files.
 
-This listing is **shallow** — top level only. For file-level routing of a nugget, read `~/source/knowledgebase/CLAUDE.md`; it is the index mapping topics (claude-code, kubernetes, build, observability, etc.) to their files.
+Knowledgebase is the **descriptive** sibling of standards: vendor quirks, tool internals, API taxonomies, discovered failure modes — "this is how X works", not "do it this way". A nugget routes here when it describes how an outside vendor/tool/API behaves; it routes to standards when it prescribes how to write code. Hybrid topics live in both, cross-linked.
 
-`~/source/knowledgebase/` is the **descriptive** sibling of `~/source/standards/`: vendor quirks, tool internals, API taxonomies, discovered failure modes — "this is how X works", not "do it this way". A nugget routes here when it is a fact about how an outside vendor/tool/API behaves; it routes to standards when it is a rule for how to write code. Hybrid topics live in both, cross-linked.
+Referenced by: Step 2 routing (descriptive vs prescriptive split), Step 3 dispatch (subagent must read the knowledgebase repo's `CLAUDE.md` for file-level routing), routing heuristics.
 
-Referenced by: Step 1 environment detect (confirms `~/source/knowledgebase/` exists before considering it as a target), Step 2 routing (descriptive vs prescriptive split), Step 3 dispatch (subagent must read `~/source/knowledgebase/CLAUDE.md` for file-level routing), routing heuristics.
-
-### Local repo ownership (auto-injected)
+### Repo mode and ownership (auto-injected)
 
 ${CLAUDE_SKILL_DIR}/scripts/check-user-owned.sh:
 
 !`${CLAUDE_SKILL_DIR}/scripts/check-user-owned.sh`
 
-Output: `APPLICABLE` or `NOT_APPLICABLE: <reason>`.
+Output format depends on mode:
 
-Referenced by: Step 1 environment detect (gates `~/source/standards/` subagent dispatch), Step 4 report (`Skipped` section cites the reason when `NOT_APPLICABLE`).
+- `MODE: single` + `OWNERSHIP: APPLICABLE|NOT_APPLICABLE: <reason>` — CWD is a git repo.
+- `MODE: multi` + one `REPO: <name> APPLICABLE|NOT_APPLICABLE: <reason>` per child repo — CWD is a parent directory containing child repos.
+- `MODE: none` — no git repo at CWD and no child repos found.
+
+All modes except `none` also emit:
+
+- `STANDARDS: <absolute-path>|NOT_FOUND` — resolved location of standards repo (checks `~/source/standards/`, `~/standards/`, `./standards/` in order; first git repo wins).
+- `KNOWLEDGEBASE: <absolute-path>|NOT_FOUND` — resolved location of knowledgebase repo (same resolution order).
+
+If `STANDARDS` or `KNOWLEDGEBASE` is `NOT_FOUND`, skip that subagent entirely — do not attempt to discover or create it later.
+
+Referenced by: Step 0 multi-repo detection (determines mode, lists child repos, per-repo ownership, and cross-project repo availability), Step 1 environment detect (gates `~/source/standards/` and `~/source/knowledgebase/` subagent dispatch in single-repo mode), Step 4 report (`Skipped` section cites the reason when `NOT_APPLICABLE` or `NOT_FOUND`).
 
 ### Remote URLs (auto-injected)
 
@@ -69,13 +76,13 @@ ${CLAUDE_SKILL_DIR}/scripts/get-remotes.sh:
 
 !`${CLAUDE_SKILL_DIR}/scripts/get-remotes.sh`
 
-Output: four lines. Both the raw form (whatever `git remote get-url origin` returned — SSH or HTTPS) and the converted public HTTPS form are pre-computed so subagents never have to convert.
+Output: six lines. Both the raw form (whatever `git remote get-url origin` returned — SSH or HTTPS) and the converted public HTTPS form are pre-computed so subagents never have to convert. Standards and knowledgebase paths are resolved using the same logic as `check-user-owned.sh` (`~/source/<name>`, `~/<name>`, `./<name>` — first git repo wins).
 
-- `LOCAL_REMOTE_RAW: <url|none>` — origin of the local repo (cwd), as stored in `.git/config`.
+- `LOCAL_REMOTE_RAW: <url|none>` — origin of the local repo (cwd or `$1`), as stored in `.git/config`.
 - `LOCAL_REMOTE_HTTPS: <url|none>` — same, converted to `https://` browser form.
-- `STANDARDS_REMOTE_RAW: <url|none>` — origin of `~/source/standards/`.
+- `STANDARDS_REMOTE_RAW: <url|none>` — origin of the resolved standards repo.
 - `STANDARDS_REMOTE_HTTPS: <url|none>` — same, converted to `https://` browser form.
-- `KNOWLEDGEBASE_REMOTE_RAW: <url|none>` — origin of `~/source/knowledgebase/`.
+- `KNOWLEDGEBASE_REMOTE_RAW: <url|none>` — origin of the resolved knowledgebase repo.
 - `KNOWLEDGEBASE_REMOTE_HTTPS: <url|none>` — same, converted to `https://` browser form.
 
 The model must use these injected values directly, **never reconstruct them from filesystem paths, do its own SSH→HTTPS conversion, or guess from context**. Anti-pattern reminder: cross-repo references in any written doc must use the `_HTTPS` value verbatim.
@@ -98,13 +105,92 @@ Do **not** auto-trigger on session end, commits, `/compact`, `/clear`, or PR cre
 
 ## Workflow
 
+### Step 0: Multi-repo detection
+
+Check the **Repo mode and ownership** pre-flight output:
+
+- `MODE: single` → CWD is a git repo. **Skip to Step 1** (single-repo mode). The `OWNERSHIP:` line carries forward to Step 1.
+- `MODE: multi` → CWD is a parent directory with child repos. Enter **multi-repo mode** (below). The `REPO:` lines list each child repo and its ownership status.
+- `MODE: none` → report "no git repo at CWD and no child repos found" and exit.
+
+#### Multi-repo mode
+
+When CWD is a parent directory containing child repos (e.g., a sandbox or monorepo root), the skill processes all session-relevant child repos in a single invocation. After this section completes, **skip Steps 1–4** — they are single-repo only.
+
+**0a. Identify session-relevant repos.** Scan the conversation for which child repos were touched — files read/edited, Bash commands run in their directories, code discussed. Build a set of child repo paths from the pre-flight listing. Repos with no session activity are skipped entirely.
+
+**0b. Run per-repo pre-flight.** Ownership is already known from the `REPO:` lines. For each session-relevant child repo, run via the Bash tool (all repos in parallel):
+
+- `${CLAUDE_SKILL_DIR}/scripts/get-remotes.sh <repo-path>` — remote URLs
+- `ls -1 <repo-path>/README.md <repo-path>/AGENTS.md <repo-path>/CLAUDE.md 2>&1 || true` — root doc files
+- `ls -la <repo-path>/docs/ 2>&1 || true` — docs tree
+
+**0c. Per-repo environment detection.** Apply Step 1 logic (agent-file authority, ownership gate) independently per child repo using that repo's pre-flight results.
+
+**0d. Inventory and route.** Build the session knowledge inventory (Step 2 logic) once across the whole session, but route each nugget to the specific child repo it pertains to — the repo whose code, gotcha, or workflow the nugget describes. Cross-project targets (`~/source/standards/`, `~/source/knowledgebase/`) are shared: the ownership gate passes if **any** session-relevant child repo is user-owned. Duplicate-check per the usual Step 2 rules: grep each target file for the concept before adding it to the routing map.
+
+The routing map in multi-repo mode groups by repo:
+
+```
+# Routing map (multi-repo mode, N repos, M subagents)
+
+## <child-repo-1>/
+### <child-repo-1>/<target>
+- <nugget summary>
+
+## <child-repo-2>/
+### <child-repo-2>/<target>
+- <nugget summary>
+
+## ~/source/standards/ (shared)
+- <nugget summary> (from <repo>)
+
+## Skipped (already documented)
+- <nugget summary> — found in <path>
+
+## Skipped (ephemeral)
+- <nugget summary>
+```
+
+Print the routing map, then proceed immediately to dispatch — same contract as single-repo.
+
+**0e. Dispatch.** Apply Step 3 dispatch logic — one subagent per target file per repo. Cross-project targets get one subagent each regardless of how many repos contributed nuggets. All subagents dispatch in a **single message** for parallelism. Each subagent prompt must use the **per-repo** remote URLs from step 0b (not the parent-level pre-flight, which has `none`). File paths in subagent prompts are absolute (e.g., `/sandbox/source/claude-dashboard/CLAUDE.md`).
+
+**0f. Report.** Apply Step 4 report logic with `Changed` grouped by repo:
+
+```
+# Dump report
+
+## Changed
+### <child-repo-1>/
+- <path>
+### <child-repo-2>/
+- <path>
+
+## Skipped
+- <repo>: <reason>
+
+## Standards / Knowledgebase TL;DR (cross-project repos only)
+- <repo>/<file>: <one-line what and why>
+
+## Verify (subagent bullets that look off — re-read these)
+- <path>: <which bullet, what looks wrong>
+
+## Suggested follow-ups
+- <anything that didn't fit>
+```
+
+Same rules as Step 4: no commentary, no per-file breakdown, omit empty sections.
+
 ### Step 1: Detect environment
 
 Everything is already injected at the top of this skill under **Pre-flight inventory** — doc listings, local-repo ownership, and both remote URLs. Do not re-run any of those commands.
 
 Two gates to read from the injections:
 
-1. **Local repo ownership** — if `NOT_APPLICABLE`, skip the `~/source/standards/` **and** `~/source/knowledgebase/` subagents entirely and carry the reason into the final report's `Skipped` section. The check operates on the **local repo (cwd)** — *not* on the standards or knowledgebase repos.
+1. **Cross-project repo gates** — two independent checks from the pre-flight output:
+   - **Ownership**: if `OWNERSHIP: NOT_APPLICABLE`, skip standards and knowledgebase subagents and carry the reason into the report's `Skipped` section.
+   - **Availability**: if `STANDARDS: NOT_FOUND`, skip the standards subagent. If `KNOWLEDGEBASE: NOT_FOUND`, skip the knowledgebase subagent. Carry `NOT_FOUND` into the report's `Skipped` section. Use the resolved absolute path from the `STANDARDS:`/`KNOWLEDGEBASE:` line (not a hardcoded `~/source/` path) for all downstream references.
 2. **Agent-file authority** — determine which of `CLAUDE.md` or `AGENTS.md` is the authoritative one for this repo. Never both. Rules, in order:
    - If only one of the two files exists in the root listing, that file is authoritative.
    - If both exist, read each one's opening (first ~50 lines). If one explicitly references the other as the source of truth (e.g., `AGENTS.md` says "see CLAUDE.md" or vice versa), the *referenced* file is authoritative.
@@ -278,7 +364,7 @@ When a nugget plausibly belongs to multiple targets, use these rules. Wherever t
 ## Guardrails
 
 - **Do not write to `~/.claude/`** — that is global user config, managed elsewhere.
-- **Do not modify `~/source/standards/` or `~/source/knowledgebase/` when the local repo (cwd) is not user-owned.** Both capture material from the user's own work; updates from external repos would mix in unvetted content.
+- **Do not modify `~/source/standards/` or `~/source/knowledgebase/` when no user-owned repo is in scope.** In single-repo mode, "in scope" means the local repo (cwd). In multi-repo mode, it means any session-relevant child repo. Both capture material from the user's own work; updates from external repos would mix in unvetted content.
 - **Do not commit.** This skill only writes files; commits are a separate, deliberate action by the user.
 - **Do not run quality checks against out-of-repo targets.** For any file outside the local repo (cwd) — `~/source/standards/` in particular — no `make check`, lint, tests, reachability scripts, formatters, or pre-commit hooks. These prompt the user and derail the dump's batch behavior. The user runs those checks in a separate session when they review the standards changes.
 - **Do not fabricate rationale.** If a nugget's "why" is unclear from the session, omit the rationale or list the gap under `Suggested follow-ups` — invented reasons rot the doc.
@@ -289,7 +375,10 @@ When a nugget plausibly belongs to multiple targets, use these rules. Wherever t
 
 ## Edge cases
 
-- **Agent-file authority cases** are handled in Step 1. The bare "neither exists" case is also handled there (create `CLAUDE.md` by default).
+- **Multi-repo parent directory**: Step 0 handles this. The skill detects child repos, runs pre-flight per repo, and processes all session-relevant repos in one invocation.
+- **Multi-repo with mixed ownership**: Some child repos user-owned, others not. Cross-project targets (standards, knowledgebase) are gated on whether **any** session-relevant child repo is user-owned. Per-repo targets are written regardless of ownership.
+- **Multi-repo with no session activity in any child repo**: Report "no durable knowledge identified" and exit, same as empty inventory.
+- **Agent-file authority cases** are handled in Step 1 (single-repo) or Step 0c (multi-repo). The bare "neither exists" case is also handled there (create `CLAUDE.md` by default).
 - **No README.md exists**: create one only if there is user-facing content worth persisting. Skip creation for purely internal nuggets.
 - **No `docs/` directory**: create it only if a nugget genuinely belongs in a new topic-scoped doc. Do not scaffold an empty `docs/`.
 - **No `~/source/standards/CLAUDE.md`** (the standards index): the `~/source/standards/` subagent has no map to route by — skip the standards subagent and add a follow-up entry to the report flagging that the index is missing.
