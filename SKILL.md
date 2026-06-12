@@ -2,7 +2,7 @@
 name: dump
 model: sonnet
 description: Persist session knowledge (conventions, gotchas, decisions, learnings) into durable documentation: the project's authoritative agent file (CLAUDE.md or AGENTS.md — whichever the project uses, never both), README.md, docs/standards/, ~/source/standards/ (prescriptive cross-project rules), ~/source/knowledgebase/ (descriptive cross-project facts), and other docs/ as needed. **Trigger only on the explicit `/dump` slash command.** Do not trigger on natural-language phrases — the user wants deterministic invocation, never inferred intent. Dispatches parallel subagents per documentation target, writes directly, reports the list of changed paths after.
-allowed-tools: Bash(ls:*), Bash(${CLAUDE_SKILL_DIR}/scripts/check-user-owned.sh), Bash(${CLAUDE_SKILL_DIR}/scripts/get-remotes.sh), Bash(${CLAUDE_SKILL_DIR}/scripts/get-remotes.sh:*)
+allowed-tools: Bash(ls:*), Bash(${CLAUDE_SKILL_DIR}/scripts/check-user-owned.sh), Bash(${CLAUDE_SKILL_DIR}/scripts/get-remotes.sh), Bash(${CLAUDE_SKILL_DIR}/scripts/get-remotes.sh:*), Bash(${CLAUDE_SKILL_DIR}/scripts/resolve-listing.sh:*)
 ---
 
 # dump
@@ -33,7 +33,7 @@ Referenced by: Step 2 routing (existing `docs/` structure determines whether a n
 
 ### Cross-project standards  (auto-injected)
 
-!`(for d in "$HOME/source/standards" "$HOME/standards" "./standards"; do git -C "$d" rev-parse --git-dir &>/dev/null && echo "standards path: $(cd "$d" && pwd)" && ls -la "$d/" && exit 0; done; echo "standards: NOT_FOUND") 2>&1`
+!`${CLAUDE_SKILL_DIR}/scripts/resolve-listing.sh standards`
 
 **Shallow** listing — top level only. For file-level routing of a nugget, read `CLAUDE.md` in the listed path; it is the index mapping topics to files.
 
@@ -41,7 +41,7 @@ Referenced by: Step 3 dispatch (subagent must read the standards repo's `CLAUDE.
 
 ### Cross-project knowledgebase  (auto-injected)
 
-!`(for d in "$HOME/source/knowledgebase" "$HOME/knowledgebase" "./knowledgebase"; do git -C "$d" rev-parse --git-dir &>/dev/null && echo "knowledgebase path: $(cd "$d" && pwd)" && ls -la "$d/" && exit 0; done; echo "knowledgebase: NOT_FOUND") 2>&1`
+!`${CLAUDE_SKILL_DIR}/scripts/resolve-listing.sh knowledgebase`
 
 **Shallow** listing — top level only. For file-level routing of a nugget, read `CLAUDE.md` in the listed path; it is the index mapping topics to files.
 
