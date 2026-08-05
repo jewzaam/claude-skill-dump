@@ -76,10 +76,11 @@ ${CLAUDE_SKILL_DIR}/scripts/get-remotes.sh:
 
 !`${CLAUDE_SKILL_DIR}/scripts/get-remotes.sh`
 
-Output: six lines. Both the raw form (whatever `git remote get-url origin` returned — SSH or HTTPS) and the converted public HTTPS form are pre-computed so subagents never have to convert. Standards and knowledgebase paths are resolved using the same logic as `check-user-owned.sh` (`~/source/<name>`, `~/<name>`, `./<name>` — first git repo wins).
+Output: seven lines. Both the raw form (whatever `git remote get-url origin` returned — SSH or HTTPS) and the converted public HTTPS form are pre-computed so subagents never have to convert. Standards and knowledgebase paths are resolved using the same logic as `check-user-owned.sh` (`~/source/<name>`, `~/<name>`, `./<name>` — first git repo wins).
 
 - `LOCAL_REMOTE_RAW: <url|none>` — origin of the local repo (cwd or `$1`), as stored in `.git/config`.
 - `LOCAL_REMOTE_HTTPS: <url|none>` — same, converted to `https://` browser form.
+- `LOCAL_VISIBILITY: PUBLIC|PRIVATE|UNKNOWN` — whether the local repo is publicly readable, via `gh repo view --json isPrivate`. `UNKNOWN` when `gh` is absent, unauthenticated, or the remote is not a GitHub repo. **Treat `UNKNOWN` as `PRIVATE`** — a missing citation is recoverable, a published dead link is not. `git` cannot answer this: visibility is a forge concept, and an anonymous `ls-remote` probe is defeated by any cached credential helper.
 - `STANDARDS_REMOTE_RAW: <url|none>` — origin of the resolved standards repo.
 - `STANDARDS_REMOTE_HTTPS: <url|none>` — same, converted to `https://` browser form.
 - `KNOWLEDGEBASE_REMOTE_RAW: <url|none>` — origin of the resolved knowledgebase repo.
@@ -87,7 +88,7 @@ Output: six lines. Both the raw form (whatever `git remote get-url origin` retur
 
 The model must use these injected values directly, **never reconstruct them from filesystem paths, do its own SSH→HTTPS conversion, or guess from context**. Anti-pattern reminder: cross-repo references in any written doc must use the `_HTTPS` value verbatim.
 
-Referenced by: Step 3 dispatch (subagent prompts include the `_HTTPS` URL for provenance and cross-repo references), anti-patterns (cross-repo reference rule).
+Referenced by: Step 3 dispatch (subagent prompts include the `_HTTPS` URL for provenance and cross-repo references, gated on `LOCAL_VISIBILITY`), anti-patterns (cross-repo reference rule).
 
 ## Purpose
 
@@ -262,6 +263,13 @@ Each subagent prompt must include:
 1. **Goal**: which file to update or create, and the durable purpose of that file
 2. **Knowledge bundle**: the relevant nuggets from the session inventory, verbatim where possible
 3. **Provenance**: paste the `LOCAL_REMOTE` URL from the **Remote URLs** pre-flight injection so the subagent can cite the source repo via its public `https://` form when the doc requires it (e.g., standards entries). For the `~/source/standards/` subagent, paste `LOCAL_REMOTE` and `STANDARDS_REMOTE`. For the `~/source/knowledgebase/` subagent, paste `LOCAL_REMOTE`, `KNOWLEDGEBASE_REMOTE`, and `STANDARDS_REMOTE` (the last so it can cross-link a hybrid nugget's prescriptive half). The subagent must never derive these URLs itself — use the injected values verbatim.
+
+   **Gate the local citation on `LOCAL_VISIBILITY`.** `~/source/standards/` and `~/source/knowledgebase/` are public; the repo `/dump` runs in often is not.
+
+   - `LOCAL_VISIBILITY: PUBLIC` → paste `LOCAL_REMOTE_HTTPS` and tell the subagent to cite it. A concrete, resolvable source repo is the most useful attribution there is — prefer it whenever it is available.
+   - `LOCAL_VISIBILITY: PRIVATE` or `UNKNOWN` → **do not paste `LOCAL_REMOTE` into a cross-project subagent prompt at all.** A link an outside reader cannot open is worse than none: it 404s and names a private repo. Instruct the subagent to attribute descriptively instead — "discovered on a k3s + Longhorn cluster", "observed while deploying a KasmVNC desktop workload", "a repo edited on Windows whose scripts run in Linux containers". Name the *environment*, not the repo.
+
+   Either way, public third-party identifiers — an upstream image, a vendor API, an OSS project — are always written in full; they are what the reader looks up. `STANDARDS_REMOTE` and `KNOWLEDGEBASE_REMOTE` are both public and never gated. Project-local targets (the agent file, `README.md`, `docs/`) live inside the repo and need no provenance at all.
 4. **Style rules**:
    - Preserve existing structure and heading conventions in the file
    - Insert new content under the right section; do not reorder unrelated content
@@ -282,7 +290,7 @@ You are persisting session knowledge into <ABSOLUTE_PATH>.
 Purpose of this file: <one-line purpose, e.g., "agent-facing project conventions and gotchas">
 
 Provenance (use verbatim, do not derive or convert):
-- Local repo URL (HTTPS): <LOCAL_REMOTE_HTTPS from pre-flight>
+- Local repo URL (HTTPS): <LOCAL_REMOTE_HTTPS — include this line ONLY when LOCAL_VISIBILITY is PUBLIC; omit it entirely for PRIVATE or UNKNOWN and instead write: "The source repo is not public. Attribute descriptively — name the environment the finding came from, never a repo URL.">
 - Standards repo URL (HTTPS): <STANDARDS_REMOTE_HTTPS from pre-flight, if applicable>
 
 Knowledge to integrate (from session):
@@ -397,6 +405,7 @@ If only one target has content, dispatch a single subagent or do the write inlin
 - Do not dump the entire conversation transcript into a doc. Extract durable nuggets only.
 - Do not write "as discussed in our session" or any reference to the session itself. Docs are timeless artifacts.
 - **Do not reference other repos by local filesystem path** (e.g., `~/source/foo/bar.sh`, `/home/user/source/foo`). Local paths are not portable and rot when directory layouts change. Any cross-repo reference must use the **public git URL** derived from the `LOCAL_REMOTE` / `STANDARDS_REMOTE` values in the **Remote URLs** pre-flight injection, converted to its `https://` browser form if the remote is SSH. Example: `git@github.com:jewzaam/jewzaam-reviews.git` → `https://github.com/jewzaam/jewzaam-reviews`. The local repo (where `/dump` was invoked) is the only repo a doc may reference by relative path.
+- **Do not cite a non-public source repo in `~/source/standards/` or `~/source/knowledgebase/`.** Both are public. Check `LOCAL_VISIBILITY` from the pre-flight injection first: cite `LOCAL_REMOTE_HTTPS` when it is `PUBLIC`, attribute descriptively when it is `PRIVATE` or `UNKNOWN`. Never infer visibility from the repo name or from whether you can read it locally — the operator can read their own private repos, so local readability proves nothing.
 - **Do not derive remote URLs from filesystem paths or guess them.** Use only the injected `LOCAL_REMOTE` / `STANDARDS_REMOTE` values. Models hallucinate URLs; the script is deterministic.
 - Do not add timestamps, "last updated" lines, or changelog entries unless the file already has them.
 - Do not reformat or restructure existing content under the guise of "while I'm here".

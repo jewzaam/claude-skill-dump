@@ -18,6 +18,7 @@
 # Output (exit 0):
 #   LOCAL_REMOTE_RAW: <url|none>
 #   LOCAL_REMOTE_HTTPS: <url|none>
+#   LOCAL_VISIBILITY: PUBLIC|PRIVATE|UNKNOWN
 #   STANDARDS_REMOTE_RAW: <url|none>
 #   STANDARDS_REMOTE_HTTPS: <url|none>
 #   KNOWLEDGEBASE_REMOTE_RAW: <url|none>
@@ -41,6 +42,29 @@ to_https() {
   echo "$u"
 }
 
+# Visibility of the local repo, used to gate whether a doc written into a
+# PUBLIC target (standards, knowledgebase) may cite the source repo by URL.
+# Citing a private repo there produces a 404 for every outside reader.
+#
+# `git` cannot answer this — visibility is a forge concept, not a git one, and
+# an anonymous `ls-remote` probe is defeated by any cached credential helper.
+# `gh` is therefore required for a definitive answer.
+#
+# Degrades to UNKNOWN when gh is absent, unauthenticated, or the remote is not
+# a GitHub repo. Callers must treat UNKNOWN as PRIVATE: a missing citation is
+# recoverable, a published dead link is not.
+detect_visibility() {
+  local dir="$1"
+  local out
+  command -v gh >/dev/null 2>&1 || { echo "UNKNOWN"; return; }
+  out=$( cd "$dir" 2>/dev/null && gh repo view --json isPrivate -q .isPrivate 2>/dev/null ) || true
+  case "$out" in
+    true)  echo "PRIVATE" ;;
+    false) echo "PUBLIC" ;;
+    *)     echo "UNKNOWN" ;;
+  esac
+}
+
 resolve_repo() {
   local name="$1"
   local candidate
@@ -62,6 +86,7 @@ knowledgebase_raw=$( [ -n "$knowledgebase_dir" ] && git -C "$knowledgebase_dir" 
 
 echo "LOCAL_REMOTE_RAW: ${local_raw:-none}"
 echo "LOCAL_REMOTE_HTTPS: $(to_https "$local_raw")"
+echo "LOCAL_VISIBILITY: $(detect_visibility "$repo_dir")"
 echo "STANDARDS_REMOTE_RAW: ${standards_raw:-none}"
 echo "STANDARDS_REMOTE_HTTPS: $(to_https "$standards_raw")"
 echo "KNOWLEDGEBASE_REMOTE_RAW: ${knowledgebase_raw:-none}"
